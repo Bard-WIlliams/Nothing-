@@ -3,66 +3,63 @@
 #include <windows.h>
 #include <conio.h>
 
-#define RED FOREGROUND_RED | FOREGROUND_INTENSITY
+#define RED 12
 
+char buffer[4096] = {0};
+int pos = 0;
 HANDLE hOut;
-WORD orig_attrs;
 
-void restoreConsole() {
-    SetConsoleTextAttribute(hOut, orig_attrs);
+void save_file(const char *filename) {
+    FILE *f = fopen(filename, "w");
+    if (f) {
+        for (int i = 0; i < pos; i++) {
+            if (buffer[i] == '\r') buffer[i] = '\n';
+        }
+        fwrite(buffer, 1, pos, f);
+        fclose(f);
+    }
 }
 
 int main(int argc, char *argv[]) {
-    if (argc > 2) return 1;
+    const char *filename = (argc > 1) ? argv[1] : NULL;
     
-    char buffer[1024] = {0};
-    int pos = 0;
-    char c;
-    
-    hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    GetConsoleScreenBufferInfo(hOut, &csbi);
-    orig_attrs = csbi.wAttributes;
-    atexit(restoreConsole);
-    
-    if (argc == 2) {
-        FILE *f = fopen(argv[1], "r");
+    if (filename) {
+        FILE *f = fopen(filename, "r");
         if (f) {
-            fread(buffer, 1, sizeof(buffer)-1, f);
+            pos = fread(buffer, 1, sizeof(buffer)-1, f);
             fclose(f);
-            pos = strlen(buffer);
         }
     }
+
+    hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleOutputCP(437);
     
     while(1) {
-        COORD coord = {0, 0};
-        SetConsoleCursorPosition(hOut, coord);
-        DWORD written;
-        FillConsoleOutputCharacterA(hOut, ' ', 80*25, coord, &written);
-        
+        SetConsoleCursorPosition(hOut, (COORD){0, 0});
         SetConsoleTextAttribute(hOut, RED);
-        fwrite(buffer, 1, pos, stdout);
+        
+        for (int i = 0; i < pos; i++) {
+            putchar(buffer[i] == '\r' ? '\n' : buffer[i]);
+        }
+        printf(" ");
         fflush(stdout);
         
-        if (_kbhit()) {
-            c = _getch();
-            if (c == 4 || c == 27) break;
-            if (c == 8 && pos > 0) {
-                pos--;
-            } else if (pos < sizeof(buffer)-1 && c >= 32 && c <= 126) {
-                buffer[pos++] = c;
-            }
+        int c = _getch();
+        if (c == 4 || c == 27) break; // Ctrl+D or Esc
+        
+        if (c == 8 || c == 127) { // Backspace
+            if (pos > 0) pos--;
+        } else if (c == 0 || c == 224) {
+            _getch(); // Ignore arrow keys
+        } else if (pos < sizeof(buffer)-1 && c >= 32) {
+            buffer[pos++] = (char)c;
         }
-        Sleep(10);
     }
+
+    SetConsoleTextAttribute(hOut, 7);
+    printf("\n");
     
-    if (argc == 2) {
-        FILE *f = fopen(argv[1], "w");
-        if (f) {
-            fwrite(buffer, 1, pos, f);
-            fclose(f);
-        }
-    }
+    if (filename) save_file(filename);
     
     return 0;
 }
