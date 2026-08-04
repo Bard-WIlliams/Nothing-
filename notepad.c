@@ -1,25 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <termios.h>
-#include <unistd.h>
+#include <windows.h>
+#include <conio.h>
 
-#define RED "\033[91m"
-#define RESET "\033[0m"
+#define RED FOREGROUND_RED | FOREGROUND_INTENSITY
 
-struct termios orig_termios;
+HANDLE hOut;
+WORD orig_attrs;
 
-void disableRawMode() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-}
-
-void enableRawMode() {
-    struct termios raw;
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disableRawMode);
-    raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+void restoreConsole() {
+    SetConsoleTextAttribute(hOut, orig_attrs);
 }
 
 int main(int argc, char *argv[]) {
@@ -29,40 +19,44 @@ int main(int argc, char *argv[]) {
     int pos = 0;
     char c;
     
+    hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    GetConsoleScreenBufferInfo(hOut, &csbi);
+    orig_attrs = csbi.wAttributes;
+    atexit(restoreConsole);
+    
     if (argc == 2) {
         FILE *f = fopen(argv[1], "r");
         if (f) {
             fread(buffer, 1, sizeof(buffer)-1, f);
             fclose(f);
-            for (char *p = buffer; *p; p++) if (*p == '\n') *p = '\r';
             pos = strlen(buffer);
         }
     }
     
-    enableRawMode();
-    
     while(1) {
-        write(STDOUT_FILENO, "\x1b[H\x1b[J", 7);
-        printf(RED);
+        COORD coord = {0, 0};
+        SetConsoleCursorPosition(hOut, coord);
+        DWORD written;
+        FillConsoleOutputCharacterA(hOut, ' ', 80*25, coord, &written);
+        
+        SetConsoleTextAttribute(hOut, RED);
         fwrite(buffer, 1, pos, stdout);
         fflush(stdout);
         
-        read(STDIN_FILENO, &c, 1);
-        
-        if (c == 4) break;
-        
-        if (c == 127 && pos > 0) {
-            pos--;
-        } else if (pos < sizeof(buffer)-1) {
-            if (c == '\n') c = '\r';
-            buffer[pos++] = c;
+        if (_kbhit()) {
+            c = _getch();
+            if (c == 4 || c == 27) break;
+            if (c == 8 && pos > 0) {
+                pos--;
+            } else if (pos < sizeof(buffer)-1 && c >= 32 && c <= 126) {
+                buffer[pos++] = c;
+            }
         }
+        Sleep(10);
     }
     
-    disableRawMode();
-    
     if (argc == 2) {
-        for (int i = 0; i < pos; i++) if (buffer[i] == '\r') buffer[i] = '\n';
         FILE *f = fopen(argv[1], "w");
         if (f) {
             fwrite(buffer, 1, pos, f);
